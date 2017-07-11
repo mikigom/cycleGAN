@@ -1,17 +1,15 @@
 import tensorflow as tf
 import numpy as np
-import os
-import logging3333
+import os, sys
+import logging
 import cycleGAN as cycleGAN
 import tensorflow.contrib.slim as slim
 import buffer as buffer
-
-X_dir = "./dataset/tfrecords/"
-Y_dir = "./dataset/tfrecords/"
+from reader import Reader
+X_dir = 'data/tfrecords/apple.tfrecords'
+Y_dir = 'data/tfrecords/orange.tfrecords'
 image_size = 256
-patch_size = 70
 batch_size = 1
-min_queue_examples = 100
 lamb = 10
 epochs = 100
 buffer_memory_epoch = 50
@@ -25,7 +23,6 @@ class Trainer():
         self.batch_size = batch_size
         self.X_dir = X_dir
         self.Y_dir = Y_dir
-        self.min_queue_examples = min_queue_examples
         self.lamb = lamb
         self.epochs = epochs
         self.buffer_memory_epoch = buffer_memory_epoch
@@ -40,9 +37,9 @@ class Trainer():
         self.summary_define()
 
     def reader_define(self):
-        X_reader = Reader(self.X_dir, name='X',
+        X_reader = Reader(self.X_dir, name='apple',
             image_size=self.image_size, batch_size=self.batch_size)
-        Y_reader = Reader(self.Y_dir, name='Y',
+        Y_reader = Reader(self.Y_dir, name='orange',
             image_size=self.image_size, batch_size=self.batch_size)
         self.X = X_reader.feed()
         self.Y = Y_reader.feed()
@@ -70,8 +67,6 @@ class Trainer():
             self.Dy_buffer_G_X = cycleGAN.Discriminator(self.buffer_G_X, name = "Dy").y
 
     def loss_define(self):
-        self.global_step = tf.Variable(0, name="global_step", trainable=False)
-
         with tf.variable_scope("loss"):
             self.lr = tf.placeholder(tf.float32, shape=[], name="lr")
 
@@ -117,6 +112,8 @@ class Trainer():
         self.buffer_F_Y_summ = tf.summary.image('buffer_F_Y', self.buffer_F_Y)
         self.buffer_G_X_summ = tf.summary.image('buffer_G_X', self.buffer_G_X)
 
+        self.step = tf.Variable(0, trainable = False, name = 'step')
+
     def train(self):
         writer = tf.summary.FileWriter(self.summ_dir)
         saver = tf.train.Saver()
@@ -130,60 +127,41 @@ class Trainer():
             coord = tf.train.Coordinator()
             threads = tf.train.start_queue_runners(sess = sess, coord=coord)
 
+            X_curr_lr = 0.0002
+            Y_curr_lr = 0.0002
             try:
-                X_data_len = len(os.listdir(self.X_dir))
-                Y_data_len = len(os.listdir(self.Y_dir))
-
                 G_X_buffer = buffer.Buffer(self.buffer_memory_epoch*self.batch_size, self.batch_size)
                 F_Y_buffer = buffer.Buffer(self.buffer_memory_epoch*self.batch_size, self.batch_size)
 
+                step = 0
                 while not coord.should_stop():
-                    if X_epoch % 10 == 0 or Y_epoch % 10 == 0:
+                    if step % 10000 == 0:
                         saver.save(sess, self.check_dir)
-
-                    if (self.batch_size*X_batch_iter)/X_data_len >= 1:
-                        X_batch_iter = 0
-                        X_epoch += 1
-
-                    if (self.batch_size*Y_batch_iter)/Y_data_len >= 1:
-                        Y_batch_iter = 0
-                        Y_epoch += 1
-
-                    if(X_epoch < 100) :
-                        X_curr_lr = 0.0002
-                    else:
-                        X_curr_lr = 0.0002 - 0.0002*(Y_epoch-100)/100
-
-                    if(Y_epoch < 100) :
-                        Y_curr_lr = 0.0002
-                    else:
-                        Y_curr_lr = 0.0002 - 0.0002*(Y_epoch-100)/100
-
                     _, G_X, summ, summ_, summ__, summ___ = sess.run([self.G_optim, self.G_X, self.G_loss_summ,\
                                                                      self.X_summ, self.G_X_summ, self.F_G_X_summ],\
                                                                      feed_dict={self.lr : X_curr_lr})
                     
-                    writer.add_summary(summ, self.batch_size*X_epoch + X_batch_iter)
-                    writer.add_summary(summ_, self.batch_size*X_epoch + X_batch_iter)
-                    writer.add_summary(summ__, self.batch_size*X_epoch + X_batch_iter)
-                    writer.add_summary(summ___, self.batch_size*X_epoch + X_batch_iter)
+                    writer.add_summary(summ, step)
+                    writer.add_summary(summ_, step)
+                    writer.add_summary(summ__, step)
+                    writer.add_summary(summ___, step)
                     
                     G_X_buffer.push(G_X)
                     buffer_G_X_images = G_X_buffer.sample(self.batch_size)
                     
                     _, summ, summ_ = sess.run([self.Dy_optim, self.Dy_loss_summ, self.buffer_G_X_summ],
-                                        feed_dict={self.buffer_G_X : buffer_G_X_images})
-                    writer.add_summary(summ, self.batch_size*Y_epoch + Y_batch_iter)
-                    writer.add_summary(summ_, self.batch_size*Y_epoch + Y_batch_iter)                      
+                                        feed_dict={self.buffer_G_X : buffer_G_X_images, self.lr : Y_curr_lr})
+                    writer.add_summary(summ, step)
+                    writer.add_summary(summ_, step)
 
                     _, F_Y, summ, summ_, summ__, summ___ = sess.run([self.F_optim, self.F_Y, self.F_loss_summ,\
                                                                      self.Y_summ, self.F_Y_summ, self.G_F_Y_summ],
                                                                      feed_dict={self.lr : Y_curr_lr})
 
-                    writer.add_summary(summ, self.batch_size*Y_epoch + Y_batch_iter)
-                    writer.add_summary(summ_, self.batch_size*Y_epoch + Y_batch_iter)
-                    writer.add_summary(summ__, self.batch_size*Y_epoch + Y_batch_iter)
-                    writer.add_summary(summ___, self.batch_size*Y_epoch + Y_batch_iter)
+                    writer.add_summary(summ, step)
+                    writer.add_summary(summ_, step)
+                    writer.add_summary(summ__, step)
+                    writer.add_summary(summ___, step)
 
                     F_Y_buffer.push(F_Y)
                     buffer_F_Y_images = F_Y_buffer.sample(self.batch_size)
@@ -191,11 +169,9 @@ class Trainer():
                     _, summ, summ_ = sess.run([self.Dx_optim, self.Dx_loss_summ, self.buffer_F_Y_summ],\
                                         feed_dict={self.buffer_F_Y : buffer_F_Y_images, self.lr : X_curr_lr})
 
-                    writer.add_summary(summ, self.batch_size*X_epoch + X_batch_iter)
-                    writer.add_summary(summ_, self.batch_size*X_epoch + X_batch_iter)
-
-                    X_batch_iter += 1
-                    Y_batch_iter += 1
+                    writer.add_summary(summ, step)
+                    writer.add_summary(summ_, step)
+                    step += 1
 
             except tf.errors.OutOfRangeError:
                 print('Done training -- epoch limit reached')
@@ -204,6 +180,8 @@ class Trainer():
                 logging.info("Interrupted")
                 coord.request_stop()
             except Exception as e:
+                print(e)
+                print("@ line {}".format(sys.exc_info()[-1].tb_lineno))
                 coord.request_stop()
             finally:
                 print('Stop')

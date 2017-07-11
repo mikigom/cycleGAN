@@ -44,8 +44,6 @@ class Reader():
             capacity=self.min_queue_examples + 3*self.batch_size,
             min_after_dequeue=self.min_queue_examples
           )
-
-      tf.summary.image('_input', images)
     return images
 
   def _preprocess(self, image):
