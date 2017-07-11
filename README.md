@@ -1,5 +1,7 @@
-## cycleGAN in TF
+## cycleGAN in TF_slim
 
-It is functionally working, but **IO bottleneck is too severe** to be used in practice.
+#### cycleGAN implementation in Tensorflow Slim
 
-I plan to correct my IO code before long.
+#### Under Debugging
+
+IO operations in this work heavily depend on [@vanhuyz's work](https://github.com/vanhuyz/CycleGAN-TensorFlow)
