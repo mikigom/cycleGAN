@@ -1,13 +1,13 @@
 import tensorflow as tf
 import numpy as np
 import os
-
+import logging3333
 import cycleGAN as cycleGAN
 import tensorflow.contrib.slim as slim
 import buffer as buffer
 
-X_dir = "./dataset/apple2orange/trainX"
-Y_dir = "./dataset/apple2orange/trainY"
+X_dir = "./dataset/tfrecords/"
+Y_dir = "./dataset/tfrecords/"
 image_size = 256
 patch_size = 70
 batch_size = 1
@@ -33,48 +33,21 @@ class Trainer():
         self.check_dir = check_dir
         self.is_loaded = is_loaded
 
-        self.data_setup()
+        self.reader_define()
         self.model_construct()
         self.loss_define()
         self.optim_define()
         self.summary_define()
 
-    def data_setup(self):
-        with tf.variable_scope('data_setup'):
-            self.filenames_X = tf.train.match_filenames_once(self.X_dir + "/*.jpg")
-            self.filenames_Y = tf.train.match_filenames_once(self.Y_dir + "/*.jpg")
-
-            self.filename_queue_X = tf.train.string_input_producer(self.filenames_X, num_epochs = self.epochs)
-            self.filename_queue_Y = tf.train.string_input_producer(self.filenames_Y, num_epochs = self.epochs)
-
-            image_reader = tf.WholeFileReader()
-            _, image_file_X = image_reader.read(self.filename_queue_X)
-            _, image_file_Y = image_reader.read(self.filename_queue_Y)
-
-            images_X_origin = tf.image.decode_jpeg(image_file_X, channels = 3)
-            images_Y_origin = tf.image.decode_jpeg(image_file_Y, channels = 3)
-            images_X = tf.image.resize_images(images_X_origin, [self.image_size, self.image_size])
-            images_Y = tf.image.resize_images(images_Y_origin, [self.image_size, self.image_size])
-            images_X.set_shape((self.image_size, self.image_size, 3))
-            images_Y.set_shape((self.image_size, self.image_size, 3))
-            images_X = tf.image.convert_image_dtype(images_X, tf.float32)/127.5 - 1.0
-            images_Y = tf.image.convert_image_dtype(images_Y, tf.float32)/127.5 - 1.0
-
-            self.X_batch = tf.train.shuffle_batch([images_X],
-                                    batch_size = self.batch_size,
-                                    num_threads = 1,
-                                    capacity = self.min_queue_examples + 3 * self.batch_size,
-                                    min_after_dequeue = 50)
-            self.Y_batch = tf.train.shuffle_batch([images_Y],
-                                    batch_size = self.batch_size,
-                                    num_threads = 1,
-                                    capacity = self.min_queue_examples + 3 * self.batch_size,
-                                    min_after_dequeue = 50)
+    def reader_define(self):
+        X_reader = Reader(self.X_dir, name='X',
+            image_size=self.image_size, batch_size=self.batch_size)
+        Y_reader = Reader(self.Y_dir, name='Y',
+            image_size=self.image_size, batch_size=self.batch_size)
+        self.X = X_reader.feed()
+        self.Y = Y_reader.feed()
 
     def model_construct(self):
-        self.X = tf.placeholder(tf.float32, [None, self.image_size, self.image_size, 3], name = 'X')
-        self.Y = tf.placeholder(tf.float32, [None, self.image_size, self.image_size, 3], name = 'Y')
-
         self.buffer_F_Y = tf.placeholder(tf.float32, [None, self.image_size, self.image_size, 3], name = 'buffer_F_Y')
         self.buffer_G_X = tf.placeholder(tf.float32, [None, self.image_size, self.image_size, 3], name = 'buffer_G_X')
 
@@ -150,12 +123,12 @@ class Trainer():
         with tf.Session() as sess:
             sess.run(tf.local_variables_initializer())
             sess.run(tf.global_variables_initializer())
-            coord = tf.train.Coordinator()
-            threads = tf.train.start_queue_runners(sess = sess, coord=coord)
-
             if self.is_loaded:
                 chkpt_fname = tf.train.latest_checkpoint(check_dir)
                 saver.restore(sess, chkpt_fname)
+
+            coord = tf.train.Coordinator()
+            threads = tf.train.start_queue_runners(sess = sess, coord=coord)
 
             try:
                 X_data_len = len(os.listdir(self.X_dir))
@@ -163,11 +136,6 @@ class Trainer():
 
                 G_X_buffer = buffer.Buffer(self.buffer_memory_epoch*self.batch_size, self.batch_size)
                 F_Y_buffer = buffer.Buffer(self.buffer_memory_epoch*self.batch_size, self.batch_size)
-
-                X_epoch = 0
-                X_batch_iter = 0
-                Y_epoch = 0
-                Y_batch_iter = 0
 
                 while not coord.should_stop():
                     if X_epoch % 10 == 0 or Y_epoch % 10 == 0:
@@ -191,13 +159,9 @@ class Trainer():
                     else:
                         Y_curr_lr = 0.0002 - 0.0002*(Y_epoch-100)/100
 
-                    X_images, Y_images = sess.run([trainer.X_batch, trainer.Y_batch])
-
                     _, G_X, summ, summ_, summ__, summ___ = sess.run([self.G_optim, self.G_X, self.G_loss_summ,\
                                                                      self.X_summ, self.G_X_summ, self.F_G_X_summ],\
-                                                                     feed_dict={self.X : X_images,\
-                                                                     self.Y : Y_images,\
-                                                                     self.lr : X_curr_lr})
+                                                                     feed_dict={self.lr : X_curr_lr})
                     
                     writer.add_summary(summ, self.batch_size*X_epoch + X_batch_iter)
                     writer.add_summary(summ_, self.batch_size*X_epoch + X_batch_iter)
@@ -205,21 +169,16 @@ class Trainer():
                     writer.add_summary(summ___, self.batch_size*X_epoch + X_batch_iter)
                     
                     G_X_buffer.push(G_X)
-                    buffer_G_X_images = G_X_buffer.sample(self.batch_size)                   
-                    #buffer_G_X_images = [tf.random_crop(buffer_G_X_images, [70, 70, 3]) for i in range(10)]
+                    buffer_G_X_images = G_X_buffer.sample(self.batch_size)
                     
                     _, summ, summ_ = sess.run([self.Dy_optim, self.Dy_loss_summ, self.buffer_G_X_summ],
-                                        feed_dict={self.buffer_G_X : buffer_G_X_images,\
-                                                   self.Y : Y_images,\
-                                                   self.lr : Y_curr_lr})
+                                        feed_dict={self.buffer_G_X : buffer_G_X_images})
                     writer.add_summary(summ, self.batch_size*Y_epoch + Y_batch_iter)
                     writer.add_summary(summ_, self.batch_size*Y_epoch + Y_batch_iter)                      
 
                     _, F_Y, summ, summ_, summ__, summ___ = sess.run([self.F_optim, self.F_Y, self.F_loss_summ,\
                                                                      self.Y_summ, self.F_Y_summ, self.G_F_Y_summ],
-                                                                     feed_dict={self.X : X_images,\
-                                                                     self.Y : Y_images,\
-                                                                     self.lr : Y_curr_lr})
+                                                                     feed_dict={self.lr : Y_curr_lr})
 
                     writer.add_summary(summ, self.batch_size*Y_epoch + Y_batch_iter)
                     writer.add_summary(summ_, self.batch_size*Y_epoch + Y_batch_iter)
@@ -228,12 +187,9 @@ class Trainer():
 
                     F_Y_buffer.push(F_Y)
                     buffer_F_Y_images = F_Y_buffer.sample(self.batch_size)
-                    #buffer_F_Y_images = [tf.random_crop(buffer_F_Y_images, [70, 70, 3]) for i in range(10)]
                     
                     _, summ, summ_ = sess.run([self.Dx_optim, self.Dx_loss_summ, self.buffer_F_Y_summ],\
-                                        feed_dict={self.buffer_F_Y : buffer_F_Y_images,\
-                                                   self.X : X_images,\
-                                                   self.lr : X_curr_lr})
+                                        feed_dict={self.buffer_F_Y : buffer_F_Y_images, self.lr : X_curr_lr})
 
                     writer.add_summary(summ, self.batch_size*X_epoch + X_batch_iter)
                     writer.add_summary(summ_, self.batch_size*X_epoch + X_batch_iter)
@@ -243,11 +199,16 @@ class Trainer():
 
             except tf.errors.OutOfRangeError:
                 print('Done training -- epoch limit reached')
+                coord.request_stop()
+            except KeyboardInterrupt:
+                logging.info("Interrupted")
+                coord.request_stop()
+            except Exception as e:
+                coord.request_stop()
             finally:
                 print('Stop')
                 coord.request_stop()
-
-            coord.join(threads)
+                coord.join(threads)
 
 if __name__ == '__main__':
     trainer = Trainer()
