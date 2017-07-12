@@ -137,6 +137,7 @@ class Trainer():
                 while not coord.should_stop():
                     if step % 10000 == 0:
                         saver.save(sess, self.check_dir)
+                    __ = sess.run(self.G_optim, feed_dict = {self.lr : X_curr_lr})
                     _, G_X, summ, summ_, summ__, summ___ = sess.run([self.G_optim, self.G_X, self.G_loss_summ,\
                                                                      self.X_summ, self.G_X_summ, self.F_G_X_summ],\
                                                                      feed_dict={self.lr : X_curr_lr})
@@ -154,6 +155,7 @@ class Trainer():
                     writer.add_summary(summ, step)
                     writer.add_summary(summ_, step)
 
+                    _ = sess.run(self.F_optim, feed_dict = {self.lr : Y_curr_lr})
                     _, F_Y, summ, summ_, summ__, summ___ = sess.run([self.F_optim, self.F_Y, self.F_loss_summ,\
                                                                      self.Y_summ, self.F_Y_summ, self.G_F_Y_summ],
                                                                      feed_dict={self.lr : Y_curr_lr})

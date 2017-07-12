@@ -70,8 +70,8 @@ class Discriminator():
         with tf.variable_scope('discriminator_' + self.name):
             with slim.arg_scope([slim.conv2d],
                                 padding = 'SAME',
-                                #normalizer_fn = tf.contrib.layers.batch_norm,
-                                normalizer_fn = layer_utils.instance_norm,
+                                normalizer_fn = tf.contrib.layers.batch_norm,
+								#normalizer_fn = layer_utils.instance_norm,
                                 activation_fn = layer_utils.lrelu):
                 conv1 = slim.conv2d(self.x, self.ndf,   (4, 4), (2, 2), scope = 'conv1',\
                                     normalizer_fn = None, biases_initializer = None)
