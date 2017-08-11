@@ -1,6 +1,10 @@
 import tensorflow as tf
 import random
 import os
+import StringIO
+#from PIL import Image
+import cv2
+
 
 try:
   from os import scandir
@@ -11,15 +15,14 @@ except ImportError:
 
 FLAGS = tf.flags.FLAGS
 
-tf.flags.DEFINE_string('X_input_dir', 'data/apple2orange/trainA',
-                       'X input directory, default: data/apple2orange/trainA')
-tf.flags.DEFINE_string('Y_input_dir', 'data/apple2orange/trainB',
-                       'Y input directory, default: data/apple2orange/trainB')
-tf.flags.DEFINE_string('X_output_file', 'data/tfrecords/apple.tfrecords',
-                       'X output tfrecords file, default: data/tfrecords/apple.tfrecords')
-tf.flags.DEFINE_string('Y_output_file', 'data/tfrecords/orange.tfrecords',
-                       'Y output tfrecords file, default: data/tfrecords/orange.tfrecords')
-
+tf.flags.DEFINE_string('X_input_dir', 'data/trainA',
+                       'X input directory, default: data/trainA')
+tf.flags.DEFINE_string('Y_input_dir', 'data/trainB',
+                       'Y input directory, default: data/trainB')
+tf.flags.DEFINE_string('X_output_file', 'data/trainA.tfrecords',
+                       'X output tfrecords file, default: data/trainA.tfrecords')
+tf.flags.DEFINE_string('Y_output_file', 'data/trainB.tfrecords',
+                       'Y output tfrecords file, default: data/trainB.tfrecords')
 
 def data_reader(input_dir, shuffle=True):
   """Read images from input_dir then shuffle them
@@ -31,7 +34,7 @@ def data_reader(input_dir, shuffle=True):
   file_paths = []
 
   for img_file in scandir(input_dir):
-    if img_file.name.endswith('.jpg') and img_file.is_file():
+    if img_file.name.endswith('.jpeg') and img_file.is_file():
       file_paths.append(img_file.path)
 
   if shuffle:
@@ -59,21 +62,42 @@ def _bytes_feature(value):
   return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
 
 
-def _convert_to_example(file_path, image_buffer):
+def _convert_to_example(image_buffer):
   """Build an Example proto for an example.
   Args:
-    file_path: string, path to an image file, e.g., '/path/to/example.JPG'
     image_buffer: string, JPEG encoding of RGB image
   Returns:
     Example proto
   """
-  file_name = file_path.split('/')[-1]
-
   example = tf.train.Example(features=tf.train.Features(feature={
-      'image/file_name': _bytes_feature(tf.compat.as_bytes(os.path.basename(file_name))),
       'image/encoded_image': _bytes_feature((image_buffer))
     }))
   return example
+
+class ImageCoder(object):
+  """Helper class that provides TensorFlow image coding utilities."""
+
+  def __init__(self):
+    # Create a single Session to run all image coding calls.
+    self._sess = tf.Session()
+
+    # Initializes function that converts PNG to JPEG data.
+    self._png_data = tf.placeholder(dtype=tf.string)
+    image = tf.image.decode_png(self._png_data, channels=3)
+    self._png_to_jpeg = tf.image.encode_jpeg(image, format='rgb', quality=100)
+
+    # Initializes function that decodes RGB JPEG data.
+    self._decode_jpeg_data = tf.placeholder(dtype=tf.string)
+    self._decode_jpeg = tf.image.decode_jpeg(self._decode_jpeg_data, channels=3)
+
+  def decode_jpeg(self, image_data):
+    image = self._sess.run(self._decode_jpeg,
+                           feed_dict={self._decode_jpeg_data: image_data})
+    assert len(image.shape) == 3
+    assert image.shape[2] == 3
+    return image
+
+
 
 def data_writer(input_dir, output_file):
   """Write data to tfrecords
@@ -84,10 +108,11 @@ def data_writer(input_dir, output_file):
   output_dir = os.path.dirname(output_file)
   try:
     os.makedirs(output_dir)
-  except os.error, e:
+  except os.error as e:
     pass
 
   images_num = len(file_paths)
+  coder = ImageCoder()
 
   # dump to tfrecords file
   writer = tf.python_io.TFRecordWriter(output_file)
@@ -98,7 +123,17 @@ def data_writer(input_dir, output_file):
     with tf.gfile.FastGFile(file_path, 'rb') as f:
       image_data = f.read()
 
-    example = _convert_to_example(file_path, image_data)
+    image_data = coder.decode_jpeg(image_data)
+    image_data = cv2.copyMakeBorder(image_data, 88, 88, 48, 48, cv2.BORDER_REFLECT)
+
+    cv2.imwrite('data/temp.jpg', cv2.cvtColor(image_data, cv2.COLOR_RGB2BGR))
+
+    #padding.save('data/temp.jpg')
+
+    with tf.gfile.FastGFile('data/temp.jpg', 'rb') as g:
+      image_buff = g.read()
+
+    example = _convert_to_example(image_buff)
     writer.write(example.SerializeToString())
 
     if i % 500 == 0:

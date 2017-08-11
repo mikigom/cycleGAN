@@ -1,9 +1,10 @@
 import tensorflow as tf
 import utils
+import math
 
 class Reader():
   def __init__(self, tfrecords_file, image_size=256,
-    min_queue_examples=1000, batch_size=1, num_threads=8, name=''):
+    min_queue_examples=1000, batch_size=12, num_threads=4, name=''):
     """
     Args:
       tfrecords_file: string, tfrecords file path
@@ -32,7 +33,6 @@ class Reader():
       features = tf.parse_single_example(
           serialized_example,
           features={
-            'image/file_name': tf.FixedLenFeature([], tf.string),
             'image/encoded_image': tf.FixedLenFeature([], tf.string),
           })
 
@@ -47,14 +47,20 @@ class Reader():
     return images
 
   def _preprocess(self, image):
-    image = tf.image.resize_images(image, size=(self.image_size, self.image_size))
-    image = utils.convert2float(image)
+    image = tf.transpose(image, [1, 0, 2])
+    x = tf.random_uniform([], 0, 1120, dtype = tf.int32)
+    y = tf.random_uniform([], 0, 640, dtype = tf.int32)
+    image = tf.image.crop_to_bounding_box(image, x, y, self.image_size, self.image_size)
+
+    image = tf.contrib.image.rotate(image, -math.pi/2)
+    #image = tf.image.convert_image_dtype(image, dtype=tf.float32)
+    image = utils.convert2float(tf.cast(image, tf.float32))
     image.set_shape([self.image_size, self.image_size, 3])
     return image
 
 def test_reader():
-  TRAIN_FILE_1 = 'data/tfrecords/apple.tfrecords'
-  TRAIN_FILE_2 = 'data/tfrecords/orange.tfrecords'
+  TRAIN_FILE_1 = 'data/trainA.tfrecords'
+  TRAIN_FILE_2 = 'data/trainB.tfrecords'
 
   with tf.Graph().as_default():
     reader1 = Reader(TRAIN_FILE_1, batch_size=2)
@@ -62,7 +68,10 @@ def test_reader():
     images_op1 = reader1.feed()
     images_op2 = reader2.feed()
 
-    sess = tf.Session()
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = True 
+
+    sess = tf.Session(config = config)
     init = tf.global_variables_initializer()
     sess.run(init)
 
@@ -73,10 +82,7 @@ def test_reader():
       step = 0
       while not coord.should_stop():
         batch_images1, batch_images2 = sess.run([images_op1, images_op2])
-        print("image shape: {}".format(batch_images1))
-        print("image shape: {}".format(batch_images2))
-        print("="*10)
-        step += 1
+        print(batch_images1)
     except KeyboardInterrupt:
       print('Interrupted')
       coord.request_stop()

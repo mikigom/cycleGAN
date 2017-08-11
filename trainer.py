@@ -6,15 +6,16 @@ import cycleGAN as cycleGAN
 import tensorflow.contrib.slim as slim
 import buffer as buffer
 from reader import Reader
-X_dir = 'data/tfrecords/apple.tfrecords'
-Y_dir = 'data/tfrecords/orange.tfrecords'
+X_dir = 'data/trainA.tfrecords'
+Y_dir = 'data/trainB.tfrecords'
 image_size = 256
-batch_size = 1
-lamb = 10
-epochs = 100
+batch_size = 2
+lamb1 = 10.
+lamb2 = 0.5
+epochs = None
 buffer_memory_epoch = 50
-summ_dir = "./summ/apple2orange"
-check_dir = "./ckpts/apple2orange"
+summ_dir = "./summ/train"
+check_dir = "./ckpts/train"
 is_loaded = False
 
 class Trainer():
@@ -23,7 +24,8 @@ class Trainer():
         self.batch_size = batch_size
         self.X_dir = X_dir
         self.Y_dir = Y_dir
-        self.lamb = lamb
+        self.lamb1 = lamb1
+        self.lamb2 = lamb2
         self.epochs = epochs
         self.buffer_memory_epoch = buffer_memory_epoch
         self.summ_dir = summ_dir
@@ -73,13 +75,13 @@ class Trainer():
             disc_loss_X = tf.reduce_mean(tf.squared_difference(self.Dx_F_Y, 0.9))
             disc_loss_Y = tf.reduce_mean(tf.squared_difference(self.Dy_G_X, 0.9))
 
-            cyc_loss = tf.reduce_mean(tf.abs(self.F_G_X - self.X)) + tf.reduce_mean(tf.abs(self.Y - self.G_F_Y))
+            cyc_loss = 0.5*(tf.reduce_mean(tf.abs(self.F_G_X - self.X)) + tf.reduce_mean(tf.abs(self.Y - self.G_F_Y)))
 
-            self.F_loss = self.lamb*cyc_loss + disc_loss_Y
-            self.G_loss = self.lamb*cyc_loss + disc_loss_X
+            self.G_loss = self.lamb1*cyc_loss + disc_loss_Y + self.lamb2*tf.reduce_mean(tf.abs(self.X - self.G_X))
+            self.F_loss = self.lamb1*cyc_loss + disc_loss_X + self.lamb2*tf.reduce_mean(tf.abs(self.Y - self.F_Y))
 
-            self.Dx_loss = tf.reduce_mean(tf.square(self.Dx_buffer_F_Y)) + tf.reduce_mean(tf.squared_difference(self.Dx_X, 0.9))
-            self.Dy_loss = tf.reduce_mean(tf.square(self.Dy_buffer_G_X)) + tf.reduce_mean(tf.squared_difference(self.Dy_Y, 0.9))
+            self.Dx_loss = 0.5*(tf.reduce_mean(tf.square(self.Dx_buffer_F_Y)) + tf.reduce_mean(tf.squared_difference(self.Dx_X, 0.9)))
+            self.Dy_loss = 0.5*(tf.reduce_mean(tf.square(self.Dy_buffer_G_X)) + tf.reduce_mean(tf.squared_difference(self.Dy_Y, 0.9)))
 
     def optim_define(self):
         optimizer = tf.train.AdamOptimizer(self.lr, beta1 = 0.5)
@@ -117,7 +119,11 @@ class Trainer():
     def train(self):
         writer = tf.summary.FileWriter(self.summ_dir)
         saver = tf.train.Saver()
-        with tf.Session() as sess:
+
+        config = tf.ConfigProto()
+        config.gpu_options.allow_growth = True
+
+        with tf.Session(config = config) as sess:
             sess.run(tf.local_variables_initializer())
             sess.run(tf.global_variables_initializer())
             if self.is_loaded:
@@ -135,35 +141,37 @@ class Trainer():
 
                 step = 0
                 while not coord.should_stop():
+                    print(step)
                     if step % 10000 == 0:
                         saver.save(sess, self.check_dir)
                     __ = sess.run(self.G_optim, feed_dict = {self.lr : X_curr_lr})
                     _, G_X, summ, summ_, summ__, summ___ = sess.run([self.G_optim, self.G_X, self.G_loss_summ,\
                                                                      self.X_summ, self.G_X_summ, self.F_G_X_summ],\
                                                                      feed_dict={self.lr : X_curr_lr})
-                    
-                    writer.add_summary(summ, step)
-                    writer.add_summary(summ_, step)
-                    writer.add_summary(summ__, step)
-                    writer.add_summary(summ___, step)
+                    if step % 4 == 0:
+                        writer.add_summary(summ, step)
+                        writer.add_summary(summ_, step)
+                        writer.add_summary(summ__, step)
+                        writer.add_summary(summ___, step)
                     
                     G_X_buffer.push(G_X)
                     buffer_G_X_images = G_X_buffer.sample(self.batch_size)
                     
                     _, summ, summ_ = sess.run([self.Dy_optim, self.Dy_loss_summ, self.buffer_G_X_summ],
                                         feed_dict={self.buffer_G_X : buffer_G_X_images, self.lr : Y_curr_lr})
-                    writer.add_summary(summ, step)
-                    writer.add_summary(summ_, step)
+                    if step % 4 == 0:
+                        writer.add_summary(summ, step)
+                        writer.add_summary(summ_, step)
 
                     _ = sess.run(self.F_optim, feed_dict = {self.lr : Y_curr_lr})
                     _, F_Y, summ, summ_, summ__, summ___ = sess.run([self.F_optim, self.F_Y, self.F_loss_summ,\
                                                                      self.Y_summ, self.F_Y_summ, self.G_F_Y_summ],
                                                                      feed_dict={self.lr : Y_curr_lr})
-
-                    writer.add_summary(summ, step)
-                    writer.add_summary(summ_, step)
-                    writer.add_summary(summ__, step)
-                    writer.add_summary(summ___, step)
+                    if step % 4 == 0:
+                        writer.add_summary(summ, step)
+                        writer.add_summary(summ_, step)
+                        writer.add_summary(summ__, step)
+                        writer.add_summary(summ___, step)
 
                     F_Y_buffer.push(F_Y)
                     buffer_F_Y_images = F_Y_buffer.sample(self.batch_size)
@@ -171,8 +179,9 @@ class Trainer():
                     _, summ, summ_ = sess.run([self.Dx_optim, self.Dx_loss_summ, self.buffer_F_Y_summ],\
                                         feed_dict={self.buffer_F_Y : buffer_F_Y_images, self.lr : X_curr_lr})
 
-                    writer.add_summary(summ, step)
-                    writer.add_summary(summ_, step)
+                    if step % 4 == 0:
+                        writer.add_summary(summ, step)
+                        writer.add_summary(summ_, step)
                     step += 1
 
             except tf.errors.OutOfRangeError:

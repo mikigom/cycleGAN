@@ -45,13 +45,15 @@ class Generator():
                     resnet5 = resnet_block(resnet4, 4*self.ngf, 5)
                     resnet6 = resnet_block(resnet5, 4*self.ngf, 6)
                     resnet7 = resnet_block(resnet6, 4*self.ngf, 7)
-                    resnet8 = resnet_block(resnet7, 4*self.ngf, 8)
+                    resnet8 =   resnet_block(resnet7, 4*self.ngf, 8)
                     resnet9 = resnet_block(resnet8, 4*self.ngf, 9)
                 with tf.variable_scope('upsampling'):
-                    up1 = slim.conv2d_transpose(resnet9, 2*self.ngf, (3, 3), (2, 2), scope = 'up1')
-                    up2 = slim.conv2d_transpose(up1,     self.ngf,   (3, 3), (2, 2), scope = 'up2')
-                conv2 = slim.conv2d(up2, 3, (7, 7), activation_fn = tf.nn.tanh, scope = 'conv2',\
-                                    biases_initializer = None, normalizer_fn = None)
+                    up1 = slim.conv2d_transpose(resnet9, 2*self.ngf, (3, 3), (2, 2),
+                            normalizer_fn=layer_utils.instance_norm, scope='up1')
+                    up2 = slim.conv2d_transpose(up1,     self.ngf,   (3, 3), (2, 2),
+                            normalizer_fn=layer_utils.instance_norm, scope='up2')
+                conv2 = slim.conv2d(up2, 3, (7, 7), scope = 'conv2',\
+                                    activation_fn = tf.nn.tanh, normalizer_fn = None)
                 #conv2 = slim.conv2d(up2, 3, (7, 7), activation_fn = None, scope = 'conv2')
                 return conv2
 
@@ -77,8 +79,8 @@ class Discriminator():
                                     normalizer_fn = None, biases_initializer = None)
                 conv2 = slim.conv2d(conv1,  2*self.ndf, (4, 4), (2, 2), scope = 'conv2')
                 conv3 = slim.conv2d(conv2,  4*self.ndf, (4, 4), (2, 2), scope = 'conv3')
-                conv4 = slim.conv2d(conv3,  8*self.ndf, (4, 4), (2, 2), scope = 'conv4')
-                conv5 = slim.conv2d(conv4,  1,          (4, 4), (2, 2), scope = 'conv5',\
+                conv4 = slim.conv2d(conv3,  8*self.ndf, (4, 4), (1, 1), scope = 'conv4')
+                conv5 = slim.conv2d(conv4,  1,          (4, 4), (1, 1), scope = 'conv5',\
                                     normalizer_fn = None, activation_fn = None)
 
                 if self.use_sigmoid:
